@@ -2,12 +2,12 @@ using Microsoft.EntityFrameworkCore;
 // using Microsoft.Extensions.Logging;
 using NLog;
 using NLog.Web;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Exporter;
 
-// using ILoggerFactory factory = LoggerFactory.Create(builder => builder.AddConsole());
-// ILogger logger = factory.CreateLogger("Program");
-
-var nlogger = NLog.LogManager.Setup().LoadConfigurationFromAppSettings().GetCurrentClassLogger();
-nlogger.Debug("Nlogger init main");
+// NLog.ILogger nlogger = NLog.LogManager.Setup().LoadConfigurationFromAppSettings().GetCurrentClassLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,34 +15,87 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Host.UseNLog();
 
+// Configure OpenTelemetry
+var resourceBuilder = ResourceBuilder.CreateDefault()
+    .AddService("YourServiceName")
+    .AddAttributes(new Dictionary<string, object>
+    {
+      ["at-project-id"] = "00000000-0000-0000-0000-000000000000",
+      ["at-project-key"] = "kKMdJZdMPikzn91K0qZsTzsc9DjBSYCe6bjp0b9fojtT9Y3C",
+    });
+
+// Reusable method to configure OTLP options
+Action<OtlpExporterOptions> ConfigureOtlpOptions()
+{
+  return otlp =>
+  {
+    otlp.Protocol = OtlpExportProtocol.Grpc;
+    otlp.Endpoint = new Uri("http://otelcol.apitoolkit.io:4317");
+  };
+};
+
+// builder.Services.AddOpenTelemetry()
+//     .ConfigureResource(r => r.AddResource(resourceBuilder))
+//     .WithTracing(tracerProviderBuilder =>
+//         tracerProviderBuilder
+//             .AddAspNetCoreInstrumentation()
+//             .AddOtlpExporter(ConfigureOtlpOptions()))
+//     .WithMetrics(metricsProviderBuilder =>
+//         metricsProviderBuilder
+//             .AddAspNetCoreInstrumentation()
+//             .AddOtlpExporter(ConfigureOtlpOptions()));
+
+// Configure OpenTelemetry for logging
+builder.Logging.AddOpenTelemetry(options =>
+{
+  options.SetResourceBuilder(resourceBuilder);
+  // options.AddConsoleExporter();
+  options.AddOtlpExporter(ConfigureOtlpOptions());
+});
+using ILoggerFactory factory = LoggerFactory.Create(loggingBuilder =>
+{
+    loggingBuilder.AddConsole();
+    loggingBuilder.AddOpenTelemetry(options =>
+    {
+        options.SetResourceBuilder(resourceBuilder);
+        // options.AddConsoleExporter();
+        options.AddOtlpExporter(ConfigureOtlpOptions());
+    });
+});
+Microsoft.Extensions.Logging.ILogger logger = factory.CreateLogger("Program");
+
+logger.LogDebug("Default ilogger after open telemetry setup");
+// nlogger.Debug("Nlogger init after open telemetry");
+
 builder.Services.AddDbContext<TodoDb>(opt => opt.UseInMemoryDatabase("TodoList"));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApiDocument(config =>
 {
-    config.DocumentName = "TodoAPI";
-    config.Title = "TodoAPI v1";
-    config.Version = "v1";
+  config.DocumentName = "TodoAPI";
+  config.Title = "TodoAPI v1";
+  config.Version = "v1";
 });
+
 var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
-    app.UseOpenApi();
-    app.UseSwaggerUi(config =>
-    {
-        config.DocumentTitle = "TodoAPI";
-        config.Path = "/swagger";
-        config.DocumentPath = "/swagger/{documentName}/swagger.json";
-        config.DocExpansion = "list";
-    });
+  app.UseOpenApi();
+  app.UseSwaggerUi(config =>
+  {
+    config.DocumentTitle = "TodoAPI";
+    config.Path = "/swagger";
+    config.DocumentPath = "/swagger/{documentName}/swagger.json";
+    config.DocExpansion = "list";
+  });
 }
 
-app.MapGet("/todoitems", async (TodoDb db) =>
+app.MapGet("/todoitems", async (ILogger<Program> logger2, TodoDb db) =>
 {
-    nlogger.Error("Nlogger Making a Get request");
-    // logger.LogInformation("Making a Get request", "fun");
-    await db.Todos.ToListAsync();
+  // nlogger.Error("Nlogger Making a Get request");
+  logger2.LogError("Miden Demo test log ");
+  await db.Todos.ToListAsync();
 });
 
 app.MapGet("/todoitems/complete", async (TodoDb db) =>
@@ -56,37 +109,38 @@ app.MapGet("/todoitems/{id}", async (int id, TodoDb db) =>
 
 app.MapPost("/todoitems", async (Todo todo, TodoDb db) =>
 {
-    nlogger.Error("Nlogger Making a Post create TODO");
-    db.Todos.Add(todo);
-    await db.SaveChangesAsync();
+  // nlogger.Error("Nlogger Making a Post create TODO");
+  db.Todos.Add(todo);
+  await db.SaveChangesAsync();
 
-    return Results.Created($"/todoitems/{todo.Id}", todo);
+  return Results.Created($"/todoitems/{todo.Id}", todo);
 });
 
 app.MapPut("/todoitems/{id}", async (int id, Todo inputTodo, TodoDb db) =>
 {
-    var todo = await db.Todos.FindAsync(id);
+  var todo = await db.Todos.FindAsync(id);
 
-    if (todo is null) return Results.NotFound();
+  if (todo is null) return Results.NotFound();
 
-    todo.Name = inputTodo.Name;
-    todo.IsComplete = inputTodo.IsComplete;
+  todo.Name = inputTodo.Name;
+  todo.IsComplete = inputTodo.IsComplete;
 
-    await db.SaveChangesAsync();
+  await db.SaveChangesAsync();
 
-    return Results.NoContent();
+  return Results.NoContent();
 });
 
 app.MapDelete("/todoitems/{id}", async (int id, TodoDb db) =>
 {
-    if (await db.Todos.FindAsync(id) is Todo todo)
-    {
-        db.Todos.Remove(todo);
-        await db.SaveChangesAsync();
-        return Results.NoContent();
-    }
+  if (await db.Todos.FindAsync(id) is Todo todo)
+  {
+    db.Todos.Remove(todo);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+  }
 
-    return Results.NotFound();
+  return Results.NotFound();
 });
 
 app.Run();
+NLog.LogManager.Shutdown();

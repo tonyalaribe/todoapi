@@ -1,13 +1,9 @@
 using Microsoft.EntityFrameworkCore;
-// using Microsoft.Extensions.Logging;
-using NLog;
 using NLog.Web;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Exporter;
-
-// NLog.ILogger nlogger = NLog.LogManager.Setup().LoadConfigurationFromAppSettings().GetCurrentClassLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,38 +30,20 @@ Action<OtlpExporterOptions> ConfigureOtlpOptions()
   };
 };
 
-// builder.Services.AddOpenTelemetry()
-//     .ConfigureResource(r => r.AddResource(resourceBuilder))
-//     .WithTracing(tracerProviderBuilder =>
-//         tracerProviderBuilder
-//             .AddAspNetCoreInstrumentation()
-//             .AddOtlpExporter(ConfigureOtlpOptions()))
-//     .WithMetrics(metricsProviderBuilder =>
-//         metricsProviderBuilder
-//             .AddAspNetCoreInstrumentation()
-//             .AddOtlpExporter(ConfigureOtlpOptions()));
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracerProviderBuilder =>
+        tracerProviderBuilder
+            .SetResourceBuilder(resourceBuilder)
+            .AddAspNetCoreInstrumentation()
+            .AddOtlpExporter(ConfigureOtlpOptions()));
 
 // Configure OpenTelemetry for logging
 builder.Logging.AddOpenTelemetry(options =>
 {
   options.SetResourceBuilder(resourceBuilder);
-  // options.AddConsoleExporter();
   options.AddOtlpExporter(ConfigureOtlpOptions());
 });
-using ILoggerFactory factory = LoggerFactory.Create(loggingBuilder =>
-{
-    loggingBuilder.AddConsole();
-    loggingBuilder.AddOpenTelemetry(options =>
-    {
-        options.SetResourceBuilder(resourceBuilder);
-        // options.AddConsoleExporter();
-        options.AddOtlpExporter(ConfigureOtlpOptions());
-    });
-});
-Microsoft.Extensions.Logging.ILogger logger = factory.CreateLogger("Program");
-
-logger.LogDebug("Default ilogger after open telemetry setup");
-// nlogger.Debug("Nlogger init after open telemetry");
 
 builder.Services.AddDbContext<TodoDb>(opt => opt.UseInMemoryDatabase("TodoList"));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
@@ -91,10 +69,12 @@ if (app.Environment.IsDevelopment())
   });
 }
 
-app.MapGet("/todoitems", async (ILogger<Program> logger2, TodoDb db) =>
+app.Logger.LogInformation("Info logging ===");
+app.Logger.LogError("Miden Error logging === ");
+
+app.MapGet("/todoitems", async (ILogger<Program> logger, TodoDb db) =>
 {
-  // nlogger.Error("Nlogger Making a Get request");
-  logger2.LogError("Miden Demo test log ");
+  logger.LogError("GET: Miden Demo test log ");
   await db.Todos.ToListAsync();
 });
 
@@ -109,7 +89,6 @@ app.MapGet("/todoitems/{id}", async (int id, TodoDb db) =>
 
 app.MapPost("/todoitems", async (Todo todo, TodoDb db) =>
 {
-  // nlogger.Error("Nlogger Making a Post create TODO");
   db.Todos.Add(todo);
   await db.SaveChangesAsync();
 
